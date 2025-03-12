@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <title>POST request</title>
+    <meta charset="utf-8"/>
+
+</head>
+<body>
+<form method="post">
+    {# TODO добавить js-проверку склонения дней/часов #}
+    {% csrf_token %}
+    <script>
+        const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    </script>
+    <p style="color: red">{{ error }}</p>
+    <label>
+        Название лекарства
+        <input name="medicament" type="text" maxlength="30" required>
+    </label>
+    <br>
+    <label>
+        Лекарство необходимо принимать каждые
+        <input name="interval" type="number" min="1" max="24" required>
+        часов
+    </label>
+    <br>
+    <label>
+        Лекарство необходимо принимать в течение (необязательное поле)
+        <input name="duration" type="number" min="1">
+        дней
+    </label>
+    <br>
+    <label>
+        ID:
+        <input name="id" type="text" minlength="16" maxlength="16" required>
+    </label>
+    <button type="submit">Отправить</button>
+</form>
+</body>
+</html>
