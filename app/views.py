@@ -1,9 +1,10 @@
 import datetime
+import zoneinfo
 
 import pytz
+from tzlocal import get_localzone
 from django.http import HttpResponse
 from django.shortcuts import render
-from django.templatetags.tz import utc
 from django.utils import timezone
 
 from aibolit import settings
@@ -11,95 +12,151 @@ from app.models import Schedule
 
 
 def schedule(request):
-    if len(request.GET) == 0 and len(request.POST) > 0:
+    # В ответ роут должен возвращать идентификатор (id) созданного расписания из базы данных
+    if (not request.GET
+            and len(request.POST) == 5
+            and not request.POST.get("medicament") is None
+            and not request.POST.get("id") is None
+            and not request.POST.get("interval") is None
+            and not request.POST.get("duration") is None):
+
         errorText = ""
+
         post = request.POST
         medicament = post.get("medicament")
-        Id = post.get("id")
+        user_id = post.get("id")
 
-        if medicament is None or medicament == "" or post.get("interval") is None or post.get(
-                "interval") == "" or Id is None or Id == "":
-            return render(request, post, context={"error": "Заполнены не все поля"}, status=400)
+        # Заполнены ли поля
+        if medicament == "" or post.get("interval") == "" or user_id == "":
+            return render(request, 'post.html', context={"error": "Заполнены не все поля"}, status=400)
 
+        # Интервал - число?
         if not post.get("interval").isdigit():
-            return render(request, post, context={"error": "Интервал приема введен некорректно"})
+            return render(request, 'post.html', context={"error": "Интервал приема введен некорректно"}, status=400)
         interval = int(post.get("interval"))
 
-        if post.get("duration") == "" or post.get("duration") is None:
+        # Продолжительность приёма введена?
+        if post.get("duration") == "":
             duration = 0
         elif not post.get("duration").isdigit():
-            return render(request, post, context={"error": "Продолжительность приема введена некорректно"})
+            return render(request, 'post.html', context={"error": "Продолжительность приема введена некорректно"},
+                          status=400)
         else:
             duration = int(post.get("duration"))
 
+        # Корректно ли название медикамента
         if len(medicament) > 30:
             errorText += "Название лекарства должно быть короче 30 символов. "
 
+        # Входит ли интервал в необходимые границы
         if interval > 24 or interval < 1:
             errorText += "Интервал приема лекарства должен быть от 1 до 24-х часов. "
 
-        if duration == 0 and post.get("duration") != "" and not post.get("duration") is None:
-            errorText += "Продолжительность приёма должна быть или больше 1. "
+        # Продолжительность записана корректно?
+        if duration <= 0 and post.get("duration") != "":
+            errorText += "Продолжительность приёма должна быть не может быть неположительной. "
 
-        if len(Id) != 16 or not Id.isdigit():
+        # Проверка записи номера полиса (id)
+        if len(user_id) != 16 or not user_id.isdigit():
             errorText += "Номер полиса состоит из 16 цифр. "
 
         if len(errorText) > 0:
             return render(request, post, context={"error": errorText})
 
-        now = datetime.datetime.now(tz=pytz.timezone(settings.TIME_ZONE))
+        now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
         currentTime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=now.hour, minute=now.minute)
         while not int(currentTime.minute) in [0, 15, 30, 45]:
             currentTime += datetime.timedelta(minutes=1)
-        newSchedule = Schedule.objects.create(animalId=Id,
+        newSchedule = Schedule.objects.create(animalId=user_id,
                                               medicamentName=medicament,
                                               lastSentNotification=currentTime,
                                               lastPlannedNotificationLimit=(currentTime + timezone.timedelta(
                                                   days=duration)) if duration > 0 else None,
                                               receptionInterval=interval
                                               )
-        # В ответ роут должен возвращать идентификатор (id) созданного
-        # расписания из базы данных
         return HttpResponse(newSchedule.id)
 
-    elif len(request.GET) == 0 and len(request.POST) == 0:
+    # Отправлен запрос без параметров
+    elif not request.GET and not request.POST:
         return render(request, 'post.html')
-    elif len(request.GET) == 2 and len(request.POST) == 0:
+
+    # Возвращает данные о выбранном расписании с рассчитанным
+    # графиком приёмов на день
+    elif (len(request.GET) == 2 and not request.POST
+          and not request.GET.get("user_id") is None
+          and not request.GET.get("schedule_id")):
         # Какие-то действия с БД.
         get = request.GET
         animalId = get.get("user_id")
-        Id = get.get("schedule_id")
+        user_id = get.get("schedule_id")
 
-        if animalId is None or animalId == "" or Id is None or Id == "":
+        if animalId == "" or user_id == "":
             return HttpResponse("Не все поля заполнены", status=400)
         try:
-            dbSchedule = Schedule.objects.get(animalId=animalId, id=Id)
+            dbSchedule = Schedule.objects.get(animalId=animalId, id=user_id)
         except Schedule.DoesNotExist:
             return HttpResponse("Расписание не найдено", status=404)
 
-        lastNotification = dbSchedule.lastSentNotification
-        interval = dbSchedule.receptionInterval
-        now = datetime.datetime.now(tz=pytz.timezone(settings.TIME_ZONE))
-        dayStart = datetime.datetime(now.year, now.month, now.day, 8, tzinfo=pytz.timezone(settings.TIME_ZONE))
-        dayEnd = datetime.datetime(now.year, now.month, now.day, 22, tzinfo=pytz.timezone(settings.TIME_ZONE))
-        notifications = []
-        # TODO добавить lastPlanned
-        while lastNotification < dayEnd:
-            if (lastNotification + datetime.timedelta(
-                    hours=interval)).hour <= 22 and lastNotification + datetime.timedelta(hours=interval) < dayStart:
-                lastNotification += datetime.timedelta(hours=interval)
-            elif (lastNotification + datetime.timedelta(
-                    hours=interval)).hour > 22 and lastNotification + datetime.timedelta(hours=interval) < dayStart:
-                temp = (lastNotification + datetime.timedelta(days=1))
-                lastNotification = datetime.datetime(temp.year, temp.month, temp.day, hour=8) + (
-                        datetime.datetime(lastNotification.year, lastNotification.month, lastNotification.day,
-                                          hour=22) - lastNotification)
-            elif lastNotification > dayStart:
-                notifications.append(lastNotification)
-                lastNotification += datetime.timedelta(hours=interval)
+        now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        # Время начало текущего дня
+        dayStart = datetime.datetime(now.year, now.month, now.day, 8, tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        # Время завершения текущего дня
+        dayEnd = datetime.datetime(now.year, now.month, now.day, 22, tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
 
-        # Возвращает данные о выбранном расписании с рассчитанным
-        # графиком приёмов на день
+        # Последнее отправленное юзеру уведомление
+        lastSentNotification = dbSchedule.lastSentNotification.astimezone(pytz.timezone("UTC"))
+        # Время, после которого расписание перестает действовать
+        lastPlannedNotification = dayEnd if dbSchedule.lastPlannedNotificationLimit is None \
+            else dbSchedule.lastPlannedNotificationLimit.astimezone(pytz.timezone("UTC"))
+        # Время (в часах) между приёмами лекарства
+        interval = dbSchedule.receptionInterval
+
+        notifications = [dbSchedule.medicamentName]
+
+        while lastSentNotification <= dayEnd and lastSentNotification <= lastPlannedNotification:
+            # Если дата уведомления находится раньше, чем начало текущего дня
+            # и следующее уведомление должно произойти в течение того же дня
+            if ((lastSentNotification + datetime.timedelta(
+                    hours=interval)).hour <= 22 and
+                    lastSentNotification + datetime.timedelta(hours=interval) < dayStart):
+                lastSentNotification += datetime.timedelta(hours=interval)
+
+            # Если дата уведомления находится раньше, чем начало текущего дня
+            # и следующее уведомление должно произойти на следующий день
+            elif (lastSentNotification + datetime.timedelta(
+                    hours=interval)).hour > 22 and lastSentNotification + datetime.timedelta(hours=interval) < dayStart:
+                temp = (lastSentNotification + datetime.timedelta(days=1))
+                lastSentNotification = (datetime.datetime(temp.year, temp.month, temp.day, hour=8)
+                                        + (datetime.datetime(lastSentNotification.year,
+                                                             lastSentNotification.month,
+                                                             lastSentNotification.day,
+                                                             hour=22)
+                                           - lastSentNotification))
+
+            # Если уведомление должно прийти в текущий день
+            elif lastSentNotification > dayStart:
+                notifications.append(lastSentNotification.astimezone(get_localzone()))
+                lastSentNotification += datetime.timedelta(hours=interval)
+
+            else:
+                return HttpResponse("Произошла ошибка")
         return HttpResponse("<br>".join(map(str, notifications)))
     else:
         return HttpResponse('Некорректные данные')
+
+
+# Возвращает список идентификаторов существующих
+# расписаний для указанного пользователя
+def schedules(request):
+    if len(request.GET) == 1 and len(request.POST) == 0 and not request.GET.get("user_id") is None:
+        user_id = request.GET.get("user_id")
+        if len(user_id) != 16 or not user_id.isdigit:
+            return HttpResponse("ID введен некорректно")
+        schedulesList = []
+        temp = Schedule.objects.filter(animalId=user_id)
+
+        # try:
+        #     pass
+        # except2
+        return HttpResponse("Good")
+    return HttpResponse("Not Good")
