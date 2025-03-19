@@ -85,7 +85,6 @@ def schedule(request):
     elif (len(request.GET) == 2 and not request.POST
           and not request.GET.get("user_id") is None
           and not request.GET.get("schedule_id")):
-        # Какие-то действия с БД.
         get = request.GET
         animalId = get.get("user_id")
         user_id = get.get("schedule_id")
@@ -142,21 +141,19 @@ def schedule(request):
                 return HttpResponse("Произошла ошибка")
         return HttpResponse("<br>".join(map(str, notifications)))
     else:
-        return HttpResponse('Некорректные данные')
+        return HttpResponse('Некорректные данные', status=400)
 
 
 # Возвращает список идентификаторов существующих
 # расписаний для указанного пользователя
 def schedules(request):
-    if len(request.GET) == 1 and len(request.POST) == 0 and not request.GET.get("user_id") is None:
+    if not request.POST and not request.GET.get("user_id") is None:
         user_id = request.GET.get("user_id")
         if len(user_id) != 16 or not user_id.isdigit:
             return HttpResponse("ID введен некорректно")
-        schedulesList = []
         temp = Schedule.objects.filter(animalId=user_id)
+        if not temp:
+            return HttpResponse(f"Расписаний для id:{user_id} не найдено", status=404)
+        return HttpResponse("<br>".join([str(i.id) for i in temp]))
 
-        # try:
-        #     pass
-        # except2
-        return HttpResponse("Good")
-    return HttpResponse("Not Good")
+    return HttpResponse("Not Good", status=400)
