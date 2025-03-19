@@ -13,7 +13,7 @@ class Schedule(models.Model):
     # Дата и время последнего отправленного напоминания (UTC)
     lastSentNotification = models.DateTimeField()
 
-    # Дата и время, после которых уведомления прекращаются, а запись о расписании удаляется (UTC)
+    # Дата и время, после которых уведомления прекращаются (UTC)
     lastPlannedNotificationLimit = models.DateTimeField(null=True)
 
     # Интервал между приемами в часах ("от одного раза в день до ежечасного приёма")

@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from aibolit import settings
 from app.models import Schedule
+from app.pillsTime import pills_in_range
 
 
 def schedule(request):
@@ -24,10 +25,10 @@ def schedule(request):
 
         post = request.POST
         medicament = post.get("medicament")
-        user_id = post.get("id")
+        schedule_id = post.get("id")
 
         # Заполнены ли поля
-        if medicament == "" or post.get("interval") == "" or user_id == "":
+        if medicament == "" or post.get("interval") == "" or schedule_id == "":
             return render(request, 'post.html', context={"error": "Заполнены не все поля"}, status=400)
 
         # Интервал - число?
@@ -57,7 +58,7 @@ def schedule(request):
             errorText += "Продолжительность приёма должна быть не может быть неположительной. "
 
         # Проверка записи номера полиса (id)
-        if len(user_id) != 16 or not user_id.isdigit():
+        if len(schedule_id) != 16 or not schedule_id.isdigit():
             errorText += "Номер полиса состоит из 16 цифр. "
 
         if len(errorText) > 0:
@@ -67,7 +68,7 @@ def schedule(request):
         currentTime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=now.hour, minute=now.minute)
         while not int(currentTime.minute) in [0, 15, 30, 45]:
             currentTime += datetime.timedelta(minutes=1)
-        newSchedule = Schedule.objects.create(animalId=user_id,
+        newSchedule = Schedule.objects.create(animalId=schedule_id,
                                               medicamentName=medicament,
                                               lastSentNotification=currentTime,
                                               lastPlannedNotificationLimit=(currentTime + timezone.timedelta(
@@ -84,23 +85,31 @@ def schedule(request):
     # графиком приёмов на день
     elif (len(request.GET) == 2 and not request.POST
           and not request.GET.get("user_id") is None
-          and not request.GET.get("schedule_id")):
+          and not request.GET.get("schedule_id") is None):
         get = request.GET
-        animalId = get.get("user_id")
-        user_id = get.get("schedule_id")
+        animal_id = get.get("user_id")
+        schedule_id = get.get("schedule_id")
 
-        if animalId == "" or user_id == "":
+        if animal_id == "" or schedule_id == "":
             return HttpResponse("Не все поля заполнены", status=400)
         try:
-            dbSchedule = Schedule.objects.get(animalId=animalId, id=user_id)
+            dbSchedule = Schedule.objects.get(animalId=animal_id, id=schedule_id)
         except Schedule.DoesNotExist:
             return HttpResponse("Расписание не найдено", status=404)
 
         now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
         # Время начало текущего дня
-        dayStart = datetime.datetime(now.year, now.month, now.day, 8, tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        dayStart = datetime.datetime(now.year,
+                                     now.month,
+                                     now.day,
+                                     settings.DAY_START_HOUR,
+                                     tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
         # Время завершения текущего дня
-        dayEnd = datetime.datetime(now.year, now.month, now.day, 22, tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        dayEnd = datetime.datetime(now.year,
+                                   now.month,
+                                   now.day,
+                                   settings.DAY_END_HOUR,
+                                   tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
 
         # Последнее отправленное юзеру уведомление
         lastSentNotification = dbSchedule.lastSentNotification.astimezone(pytz.timezone("UTC"))
@@ -111,34 +120,8 @@ def schedule(request):
         interval = dbSchedule.receptionInterval
 
         notifications = [dbSchedule.medicamentName]
+        pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
 
-        while lastSentNotification <= dayEnd and lastSentNotification <= lastPlannedNotification:
-            # Если дата уведомления находится раньше, чем начало текущего дня
-            # и следующее уведомление должно произойти в течение того же дня
-            if ((lastSentNotification + datetime.timedelta(
-                    hours=interval)).hour <= 22 and
-                    lastSentNotification + datetime.timedelta(hours=interval) < dayStart):
-                lastSentNotification += datetime.timedelta(hours=interval)
-
-            # Если дата уведомления находится раньше, чем начало текущего дня
-            # и следующее уведомление должно произойти на следующий день
-            elif (lastSentNotification + datetime.timedelta(
-                    hours=interval)).hour > 22 and lastSentNotification + datetime.timedelta(hours=interval) < dayStart:
-                temp = (lastSentNotification + datetime.timedelta(days=1))
-                lastSentNotification = (datetime.datetime(temp.year, temp.month, temp.day, hour=8)
-                                        + (datetime.datetime(lastSentNotification.year,
-                                                             lastSentNotification.month,
-                                                             lastSentNotification.day,
-                                                             hour=22)
-                                           - lastSentNotification))
-
-            # Если уведомление должно прийти в текущий день
-            elif lastSentNotification > dayStart:
-                notifications.append(lastSentNotification.astimezone(get_localzone()))
-                lastSentNotification += datetime.timedelta(hours=interval)
-
-            else:
-                return HttpResponse("Произошла ошибка")
         return HttpResponse("<br>".join(map(str, notifications)))
     else:
         return HttpResponse('Некорректные данные', status=400)
@@ -147,13 +130,47 @@ def schedule(request):
 # Возвращает список идентификаторов существующих
 # расписаний для указанного пользователя
 def schedules(request):
-    if not request.POST and not request.GET.get("user_id") is None:
+    if len(request.GET) == 1 and not request.POST and not request.GET.get("user_id") is None:
         user_id = request.GET.get("user_id")
         if len(user_id) != 16 or not user_id.isdigit:
             return HttpResponse("ID введен некорректно")
-        temp = Schedule.objects.filter(animalId=user_id)
-        if not temp:
+        schedulesSet = Schedule.objects.filter(animalId=user_id)
+        if not schedulesSet:
             return HttpResponse(f"Расписаний для id:{user_id} не найдено", status=404)
-        return HttpResponse("<br>".join([str(i.id) for i in temp]))
+        return HttpResponse("<br>".join([str(i.id) for i in schedulesSet]))
 
-    return HttpResponse("Not Good", status=400)
+    return HttpResponse('Некорректные данные', status=400)
+
+
+# Возвращает данные о таблетках, которые необходимо принять
+# в ближайший период (settings.PILLS_NEAREST_TIME).
+def next_takings(request):
+    if len(request.GET) == 1 and not request.POST and not request.GET.get("user_id") is None:
+        user_id = request.GET.get("user_id")
+        if len(user_id) != 16 or not user_id.isdigit:
+            return HttpResponse("ID введен некорректно")
+        now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+
+        pillsStart = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        pillsEnd = pillsStart + datetime.timedelta(hours=settings.PILLS_NEAREST_TIME)
+        schedulesSet = Schedule.objects.filter(animalId=user_id)
+        nearestPills = {}
+        for i in schedulesSet:
+            # Время начало текущего дня
+            dayStart = datetime.datetime(now.year, now.month, now.day, 8,
+                                         tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+            # Время завершения текущего дня
+            dayEnd = datetime.datetime(now.year, now.month, now.day, 22,
+                                       tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+
+            # Последнее отправленное юзеру уведомление
+            lastSentNotification = i.lastSentNotification.astimezone(pytz.timezone("UTC"))
+            # Время, после которого расписание перестает действовать
+            lastPlannedNotification = dayEnd if i.lastPlannedNotificationLimit is None \
+                else i.lastPlannedNotificationLimit.astimezone(pytz.timezone("UTC"))
+            # Время (в часах) между приёмами лекарства
+            interval = i.receptionInterval
+
+            notifications = [i.medicamentName]
+            pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+            return None

@@ -123,3 +123,11 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Ближайшее время приёма таблеток (в часах)
+PILLS_NEAREST_TIME = 1
+
+# Время начала дня
+DAY_START_HOUR = 8
+# Время конца дня
+DAY_END_HOUR = 22
