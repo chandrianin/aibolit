@@ -95,7 +95,8 @@ def schedule(request):
 
     # Возвращает данные о выбранном расписании с рассчитанным
     # графиком приёмов на день
-    elif (len(request.GET) == 2 and not request.POST
+    elif (len(request.GET) == 2
+          and not request.POST
           and not request.GET.get("user_id") is None
           and not request.GET.get("schedule_id") is None):
         get = request.GET
@@ -134,7 +135,11 @@ def schedule(request):
         interval = dbSchedule.receptionInterval
 
         notifications = [dbSchedule.medicamentName]
-        pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+        new_notification = pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+
+        if new_notification is not None:
+            dbSchedule.lastSentNotification = new_notification
+            dbSchedule.save(update_fields=["lastSentNotification"])
 
         return HttpResponse("<br>".join(map(str, notifications)))
     else:
@@ -183,10 +188,16 @@ def next_takings(request):
             interval = scheduleElem.receptionInterval
 
             notifications = []
-            pills_in_range(pillsStart, pillsEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+            new_notification = pills_in_range(pillsStart, pillsEnd, lastSentNotification, lastPlannedNotification,
+                                              interval, notifications)
+            if new_notification is not None:
+                scheduleElem.lastSentNotification = new_notification
+                scheduleElem.save(update_fields=["lastSentNotification"])
             nearestPills[scheduleElem.medicamentName] = notifications
+
         result = ""
         for item in nearestPills.items():
-            result += f"{item[0]}: {item[1]}<br>"
+            if item[1]:
+                result += f"{item[0]}: {item[1][0]}<br>"
         return HttpResponse(result)
     return HttpResponse("Некорректные данные", status=400)
