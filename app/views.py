@@ -75,7 +75,8 @@ def schedule(request):
                                             hour=settings.DAY_END_HOUR,
                                             tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
         next_day_start = current_day_start + datetime.timedelta(days=1)
-        currentTime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=now.hour, minute=now.minute)
+        currentTime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=now.hour, minute=now.minute,
+                                        tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
         while not int(currentTime.minute) in [0, 15, 30, 45]:
             currentTime += datetime.timedelta(minutes=1)
         if current_day_end < currentTime < next_day_start:
@@ -135,9 +136,10 @@ def schedule(request):
         interval = dbSchedule.receptionInterval
 
         notifications = [dbSchedule.medicamentName]
-        new_notification = pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+        new_notification = pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval,
+                                          notifications)
 
-        if new_notification is not None:
+        if new_notification is not None and new_notification != lastSentNotification:
             dbSchedule.lastSentNotification = new_notification
             dbSchedule.save(update_fields=["lastSentNotification"])
 
@@ -190,7 +192,7 @@ def next_takings(request):
             notifications = []
             new_notification = pills_in_range(pillsStart, pillsEnd, lastSentNotification, lastPlannedNotification,
                                               interval, notifications)
-            if new_notification is not None:
+            if new_notification is not None and new_notification != lastSentNotification:
                 scheduleElem.lastSentNotification = new_notification
                 scheduleElem.save(update_fields=["lastSentNotification"])
             nearestPills[scheduleElem.medicamentName] = notifications
