@@ -2,7 +2,6 @@ import datetime
 import zoneinfo
 
 import pytz
-from tzlocal import get_localzone
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -65,9 +64,22 @@ def schedule(request):
             return render(request, post, context={"error": errorText})
 
         now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        current_day_start = datetime.datetime(now.year,
+                                              now.month,
+                                              now.day,
+                                              hour=settings.DAY_START_HOUR,
+                                              tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        current_day_end = datetime.datetime(now.year,
+                                            now.month,
+                                            now.day,
+                                            hour=settings.DAY_END_HOUR,
+                                            tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        next_day_start = current_day_start + datetime.timedelta(days=1)
         currentTime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=now.hour, minute=now.minute)
         while not int(currentTime.minute) in [0, 15, 30, 45]:
             currentTime += datetime.timedelta(minutes=1)
+        if current_day_end < currentTime < next_day_start:
+            currentTime = next_day_start
         newSchedule = Schedule.objects.create(animalId=schedule_id,
                                               medicamentName=medicament,
                                               lastSentNotification=currentTime,
@@ -113,9 +125,11 @@ def schedule(request):
 
         # Последнее отправленное юзеру уведомление
         lastSentNotification = dbSchedule.lastSentNotification.astimezone(pytz.timezone("UTC"))
+
         # Время, после которого расписание перестает действовать
         lastPlannedNotification = dayEnd if dbSchedule.lastPlannedNotificationLimit is None \
             else dbSchedule.lastPlannedNotificationLimit.astimezone(pytz.timezone("UTC"))
+
         # Время (в часах) между приёмами лекарства
         interval = dbSchedule.receptionInterval
 
@@ -149,28 +163,30 @@ def next_takings(request):
         user_id = request.GET.get("user_id")
         if len(user_id) != 16 or not user_id.isdigit:
             return HttpResponse("ID введен некорректно")
-        now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
 
         pillsStart = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
+        while not int(pillsStart.minute) in [0, 15, 30, 45]:
+            pillsStart += datetime.timedelta(minutes=1)
         pillsEnd = pillsStart + datetime.timedelta(hours=settings.PILLS_NEAREST_TIME)
+
         schedulesSet = Schedule.objects.filter(animalId=user_id)
         nearestPills = {}
-        for i in schedulesSet:
-            # Время начало текущего дня
-            dayStart = datetime.datetime(now.year, now.month, now.day, 8,
-                                         tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
-            # Время завершения текущего дня
-            dayEnd = datetime.datetime(now.year, now.month, now.day, 22,
-                                       tzinfo=zoneinfo.ZoneInfo(key=settings.TIME_ZONE))
-
+        for scheduleElem in schedulesSet:
             # Последнее отправленное юзеру уведомление
-            lastSentNotification = i.lastSentNotification.astimezone(pytz.timezone("UTC"))
-            # Время, после которого расписание перестает действовать
-            lastPlannedNotification = dayEnd if i.lastPlannedNotificationLimit is None \
-                else i.lastPlannedNotificationLimit.astimezone(pytz.timezone("UTC"))
-            # Время (в часах) между приёмами лекарства
-            interval = i.receptionInterval
+            lastSentNotification = scheduleElem.lastSentNotification.astimezone(pytz.timezone("UTC"))
 
-            notifications = [i.medicamentName]
-            pills_in_range(dayStart, dayEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
-            return None
+            # Время, после которого расписание перестает действовать
+            lastPlannedNotification = pillsStart if scheduleElem.lastPlannedNotificationLimit is None \
+                else scheduleElem.lastPlannedNotificationLimit.astimezone(pytz.timezone("UTC"))
+
+            # Время (в часах) между приёмами лекарства
+            interval = scheduleElem.receptionInterval
+
+            notifications = []
+            pills_in_range(pillsStart, pillsEnd, lastSentNotification, lastPlannedNotification, interval, notifications)
+            nearestPills[scheduleElem.medicamentName] = notifications
+        result = ""
+        for item in nearestPills.items():
+            result += f"{item[0]}: {item[1]}<br>"
+        return HttpResponse(result)
+    return HttpResponse("Некорректные данные", status=400)

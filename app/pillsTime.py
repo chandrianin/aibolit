@@ -7,7 +7,6 @@ from aibolit.settings import TIME_ZONE, DAY_START_HOUR, DAY_END_HOUR
 
 # Возвращает массив из приемов таблеток в период времени между start и end
 def pills_in_range(start, end, last_sent_notification, last_planned_notification, interval, notifications):
-    now = datetime.datetime.now(tz=zoneinfo.ZoneInfo(key=TIME_ZONE))
     while last_sent_notification <= end and last_sent_notification <= last_planned_notification:
         current_day_start = datetime.datetime(last_sent_notification.year,
                                               last_sent_notification.month,
@@ -38,6 +37,6 @@ def pills_in_range(start, end, last_sent_notification, last_planned_notification
             last_sent_notification = next_notification
 
         # Если уведомление должно произойти в текущем интервале
-        elif last_sent_notification >= start:
+        elif last_sent_notification >= start and current_day_start <= last_sent_notification <= current_day_end:
             notifications.append(last_sent_notification.astimezone(get_localzone()).strftime("%Y-%m-%d %H:%M"))
             last_sent_notification += datetime.timedelta(hours=interval)
